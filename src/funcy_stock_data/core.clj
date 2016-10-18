@@ -31,39 +31,48 @@
    :volume volume
    :adjclose adjclose})
 
-(def yahoo-cache
-  (atom (cache/ttl-cache-factory {} :ttl (* 60 60 12 1000))))
+(def cache (atom (cache/fifo-cache-factory {} :threshold 4)))
 
-(defn yahoo-data
+(defn cache-it [f & args]
+  (let [k (keyword (apply str f args))]
+    (if (cache/has? @cache k)
+      (get (cache/hit @cache k) k)
+      (get (swap! cache
+                  #(cache/miss
+                    %
+                    k
+                    (apply f args)))
+           k))))
+
+(defn yahoo-csv
   [ticker]
-  (if (cache/has? @yahoo-cache ticker)
-    (get (cache/hit @yahoo-cache ticker) ticker)
-    (get (swap! yahoo-cache
-                #(cache/miss
-                  %
-                  ticker
-                  (->> ticker
-                       yahoo-url
-                       io/reader
-                       csv/read-csv)))
-         ticker)))
+  (->> ticker
+       yahoo-url
+       io/reader
+       csv/read-csv))
 
-(defn ticker-vecs
+(defn- ticker-vecs
   [ticker]
   (->> ticker
        yahoo-data
        rest
        (mapv vec->tick)))
 
-(defn ticker-maps
+(def ticker-vecs
+  (partial cache-it ticker-vecs))
+
+(defn- ticker-maps
   [ticker]
   (->> ticker
        ticker-vecs
-       (mapv )))
+       (mapv tick->map)))
+
+(def ticker-maps
+  (partial cache-it ticker-maps))
 
 
 (comment
-  (def tickers ["SPY" "TLT" "GLD" "IYR" "XLU"])
+  (def tickers ["SPY" "TLT" "GLD" "IYR" "XLU" "SLV"])
   (time (mapv ticker-vecs tickers))
   (time (mapv ticker-maps tickers))
 
@@ -72,7 +81,7 @@
        ticker-vecs))
 
   (time
-   (-> "SPY"
+   (-> "TLT"
        ticker-maps))
 
   )
